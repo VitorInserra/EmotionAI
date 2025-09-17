@@ -12,7 +12,7 @@ import multiprocessing as mp
 import threading
 import uuid
 from contextlib import asynccontextmanager
-import muse_record
+import eeg_data_collection.muse_record as muse_record
 import EpocX
 from db_handling.VRData import VRData
 from fastapi import FastAPI, Depends
