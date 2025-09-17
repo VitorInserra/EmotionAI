@@ -11,24 +11,24 @@ target_col = "performance_metric"
 #     "start_time",
 #     "end_time",
 #     "score",
-#     "test_version",
+    # "test_version",
 # ]
 relevant_sensors = [
-    # "f3",
-    # "f4",
+    "f3",
+    "f4",
     "f7",
     "f8",
-    # "fc6",
-    # "fc3",
-    # "fc4",
-    # "fc5",
-    # "af3",
-    # "af4",
-    # "o1",
+    "fc6",
+    "fc3",
+    "fc4",
+    "fc5",
+    "af3",
+    "af4",
+    "o1",
     "o2",
 ]
 
-relevant_bands = ["theta", "alpha", "beta_l", "beta_h"]
+relevant_bands = ["theta", "alpha", "beta_l", "beta_h", "delta"]
 
 def is_relevant_column(col):
     lc = col.lower()
@@ -43,13 +43,12 @@ keep_cols = [col for col in df.columns if is_relevant_column(col)]
 keep_cols.append(target_col)
 # keep_cols.append("obj_rotation")
 # keep_cols.append("test_version")
-# keep_cols.append("start_time")
+keep_cols.append("start_time")
 # keep_cols.append("session_id")
 
 df_relevant = df[keep_cols].dropna()
 # df_relevant["start_time"] = pd.to_datetime(df_relevant["start_time"])
 
-print(df_relevant)
 
 Q1 = df_relevant[target_col].quantile(0.1)
 Q3 = df_relevant[target_col].quantile(0.9)

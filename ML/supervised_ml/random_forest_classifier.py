@@ -4,7 +4,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
-from data_proc import df_relevant
+from ML.data_proc import df_relevant
 from sklearn.tree import export_graphviz
 import graphviz
 import matplotlib.pyplot as plt
@@ -104,7 +104,7 @@ print(cm)
 feature_importances = rf_clf.feature_importances_
 feature_names = df_relevant.drop(columns=[target_col]).columns
 
-sorted_idx = np.argsort(feature_importances)[::-1][:15]  # top 15 features
+sorted_idx = np.argsort(feature_importances)[::-1][:5]
 
 plt.figure(figsize=(10, 6))
 plt.barh(range(len(sorted_idx)), feature_importances[sorted_idx], align="center")
