@@ -7,7 +7,7 @@ from ML.unsupervised_ml.utils import plot_pca3d_clusters, plot_pca3d_clusters_co
 
 target_col = "performance_metric"
 
-k_means = KMeans(n_clusters=2, max_iter=50, tol=0.000001, verbose=1)
+k_means = KMeans(n_clusters=17, max_iter=50, tol=0.000001, verbose=1)
 features = df_relevant.drop(columns=[target_col, 'start_time']).values
 # X_train, X_val = train_test_split(features, test_size=0.15, random_state=42, shuffle=True)
 k_means = k_means.fit(features)
