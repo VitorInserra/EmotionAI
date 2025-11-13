@@ -5,14 +5,11 @@ from datetime import datetime
 import time
 import ssl
 import os
-import uuid
-import threading
 import pandas as pd
-from db_handling.EpocXData import insert_eeg_db
-from sqlalchemy.orm import Session
-from fastapi import FastAPI, Depends
-from db import get_db
 from dotenv import load_dotenv
+
+
+## TODO: GET RAW DATA
 
 CORTEX_URL = "wss://127.0.0.1:6868"
 
@@ -85,16 +82,16 @@ async def create_session(websocket, cortex_token, headset_id):
 
 
 async def subscribe_to_streams(websocket, cortex_token, session_id):
-    print("\n==== subscribe (band power) ====")
+    print("\n==== subscribe (power bands) ====")
     return await send_json_rpc(
         websocket,
         "subscribe",
-        {"cortexToken": cortex_token, "session": session_id, "streams": ["pow"]},
+        {"cortexToken": cortex_token, "session": session_id, "streams": ["pow", "dev"]},
         request_id=7,
     )
 
 
-pow_data_batch = []
+pow_data_batch = pd.DataFrame()
 CHANNELS = [
     "AF3",
     "F7",
@@ -112,10 +109,16 @@ CHANNELS = [
     "AF4",
 ]
 BANDS = ["theta", "alpha", "betaL", "betaH", "gamma"]
+cols = [f"{ch}_{band}" for ch in CHANNELS for band in BANDS]
+cols.append("timestamp")
+pow_data_batch = pd.DataFrame(columns=cols)
+sensor_contact_quality = 4
 
 
 async def handle_incoming_data(websocket):
+    global sensor_contact_quality
     batch_size = -1
+    row = []
     while True:
         data_msg = await websocket.recv()
         data = json.loads(data_msg)
@@ -124,20 +127,17 @@ async def handle_incoming_data(websocket):
             # 'data["pow"]' is a 70-element list in this order:
             #  AF3/theta, AF3/alpha, AF3/betaL, AF3/betaH, AF3/gamma,
             #  F7/theta, F7/alpha, ... (14 channels × 5 bands)
-            channel_values = data["pow"]
-            row = {}
-            row["timestamp"] = data["time"]
+            row = data["pow"]
+            row.append(data["time"])
 
-            for ch_index, ch_name in enumerate(CHANNELS):
-                for b_index, band_name in enumerate(BANDS):
-                    pow_index = ch_index * len(BANDS) + b_index
-                    col_name = f"{ch_name}_{band_name}"
-                    row[col_name] = channel_values[pow_index]
-
-            pow_data_batch.append(row)
+            pow_data_batch.loc[len(pow_data_batch)] = row
 
             if len(pow_data_batch) == batch_size:
                 pow_data_batch.clear()
+
+        if "dev" in data:
+            dev = list(data["dev"][2])
+            sensor_contact_quality = sum(dev)/len(dev)
 
 
 async def get_detection_info(websocket, cortex_token, session_id):
@@ -232,8 +232,3 @@ async def blink_sync():
         session_id = resp["result"]["id"]
 
         await get_detection_info(websocket, cortex_token, session_id)
-
-
-if __name__ == "__main__":
-    # asyncio.run(main())
-    asyncio.run(blink_sync())

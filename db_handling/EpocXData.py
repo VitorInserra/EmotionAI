@@ -1,116 +1,117 @@
 from datetime import datetime
 import pandas as pd
-from sqlalchemy.orm import Session
-from models.EpocXDataModel import EpocXDataModel
+import os
+import eegproc as eeg
+from .utils import compute_asymmetry_from_psd
 
+FS = 128 
 
-def insert_eeg_db(db: Session, session_id: str, df: pd.DataFrame):
+def save_eeg_data(
+    filename: str,
+    user_id: int,
+    session_id: int,
+    start_stamp: str,
+    end_stamp: str,
+    eye_id: str,
+    text_version: str,
+    seen_words: str,
+    arousal: int,
+    valence: int,
+    sensor_contact_quality: bool,
+    df: pd.DataFrame,
+) -> int:
+    if df is None or df.empty:
+        return 0
 
-    print(df)
-    try:
-        session_dump = {
-            "start_stamp": datetime.fromtimestamp(df.iloc[0]["timestamp"]),
-            "end_stamp": datetime.fromtimestamp(df.iloc[-1]["timestamp"]),
-        }
+    df_to_write = df.copy()
+    df_to_write.insert(0, "user_id", user_id)
+    df_to_write.insert(1, "session_id", session_id)
+    df_to_write.insert(2, "start_stamp", start_stamp)
+    df_to_write.insert(3, "end_stamp", end_stamp)
+    df_to_write.insert(4, "eye_id", eye_id)
+    df_to_write.insert(5, "text_version", text_version)
+    df_to_write.insert(5, "seen_words", seen_words)
+    df_to_write.insert(6, "arousal", arousal)
+    df_to_write.insert(7, "valence", valence)
+    df_to_write.insert(8, "sensor_contact_quality", sensor_contact_quality)
 
-        for key in df.columns:
-            if key != "timestamp":
-                session_dump[key] = list(df[key])
+    file_exists = os.path.exists(filename)
 
-        eeg_data = EpocXDataModel(
-            session_id=session_id,
-            start_stamp=session_dump["start_stamp"],
-            end_stamp=session_dump["end_stamp"],
-            # AF3
-            af3_theta=session_dump.get("AF3_theta", []),
-            af3_alpha=session_dump.get("AF3_alpha", []),
-            af3_beta_l=session_dump.get("AF3_betaL", []),
-            af3_beta_h=session_dump.get("AF3_betaH", []),
-            af3_gamma=session_dump.get("AF3_gamma", []),
-            # F7
-            f7_theta=session_dump.get("F7_theta", []),
-            f7_alpha=session_dump.get("F7_alpha", []),
-            f7_beta_l=session_dump.get("F7_betaL", []),
-            f7_beta_h=session_dump.get("F7_betaH", []),
-            f7_gamma=session_dump.get("F7_gamma", []),
-            # F3
-            f3_theta=session_dump.get("F3_theta", []),
-            f3_alpha=session_dump.get("F3_alpha", []),
-            f3_beta_l=session_dump.get("F3_betaL", []),
-            f3_beta_h=session_dump.get("F3_betaH", []),
-            f3_gamma=session_dump.get("F3_gamma", []),
-            # FC5
-            fc5_theta=session_dump.get("FC5_theta", []),
-            fc5_alpha=session_dump.get("FC5_alpha", []),
-            fc5_beta_l=session_dump.get("FC5_betaL", []),
-            fc5_beta_h=session_dump.get("FC5_betaH", []),
-            fc5_gamma=session_dump.get("FC5_gamma", []),
-            # T7
-            t7_theta=session_dump.get("T7_theta", []),
-            t7_alpha=session_dump.get("T7_alpha", []),
-            t7_beta_l=session_dump.get("T7_betaL", []),
-            t7_beta_h=session_dump.get("T7_betaH", []),
-            t7_gamma=session_dump.get("T7_gamma", []),
-            # P7
-            p7_theta=session_dump.get("P7_theta", []),
-            p7_alpha=session_dump.get("P7_alpha", []),
-            p7_beta_l=session_dump.get("P7_betaL", []),
-            p7_beta_h=session_dump.get("P7_betaH", []),
-            p7_gamma=session_dump.get("P7_gamma", []),
-            # O1
-            o1_theta=session_dump.get("O1_theta", []),
-            o1_alpha=session_dump.get("O1_alpha", []),
-            o1_beta_l=session_dump.get("O1_betaL", []),
-            o1_beta_h=session_dump.get("O1_betaH", []),
-            o1_gamma=session_dump.get("O1_gamma", []),
-            # O2
-            o2_theta=session_dump.get("O2_theta", []),
-            o2_alpha=session_dump.get("O2_alpha", []),
-            o2_beta_l=session_dump.get("O2_betaL", []),
-            o2_beta_h=session_dump.get("O2_betaH", []),
-            o2_gamma=session_dump.get("O2_gamma", []),
-            # P8
-            p8_theta=session_dump.get("P8_theta", []),
-            p8_alpha=session_dump.get("P8_alpha", []),
-            p8_beta_l=session_dump.get("P8_betaL", []),
-            p8_beta_h=session_dump.get("P8_betaH", []),
-            p8_gamma=session_dump.get("P8_gamma", []),
-            # T8
-            t8_theta=session_dump.get("T8_theta", []),
-            t8_alpha=session_dump.get("T8_alpha", []),
-            t8_beta_l=session_dump.get("T8_betaL", []),
-            t8_beta_h=session_dump.get("T8_betaH", []),
-            t8_gamma=session_dump.get("T8_gamma", []),
-            # FC6
-            fc6_theta=session_dump.get("FC6_theta", []),
-            fc6_alpha=session_dump.get("FC6_alpha", []),
-            fc6_beta_l=session_dump.get("FC6_betaL", []),
-            fc6_beta_h=session_dump.get("FC6_betaH", []),
-            fc6_gamma=session_dump.get("FC6_gamma", []),
-            # F4
-            f4_theta=session_dump.get("F4_theta", []),
-            f4_alpha=session_dump.get("F4_alpha", []),
-            f4_beta_l=session_dump.get("F4_betaL", []),
-            f4_beta_h=session_dump.get("F4_betaH", []),
-            f4_gamma=session_dump.get("F4_gamma", []),
-            # F8
-            f8_theta=session_dump.get("F8_theta", []),
-            f8_alpha=session_dump.get("F8_alpha", []),
-            f8_beta_l=session_dump.get("F8_betaL", []),
-            f8_beta_h=session_dump.get("F8_betaH", []),
-            f8_gamma=session_dump.get("F8_gamma", []),
-            # AF4
-            af4_theta=session_dump.get("AF4_theta", []),
-            af4_alpha=session_dump.get("AF4_alpha", []),
-            af4_beta_l=session_dump.get("AF4_betaL", []),
-            af4_beta_h=session_dump.get("AF4_betaH", []),
-            af4_gamma=session_dump.get("AF4_gamma", []),
+    if file_exists:
+        existing_cols = pd.read_csv(filename, nrows=0).columns.tolist()
+
+        incoming_cols = df_to_write.columns.tolist()
+        if set(existing_cols) != set(incoming_cols):
+            missing = set(existing_cols) - set(incoming_cols)
+            extra = set(incoming_cols) - set(existing_cols)
+            raise ValueError(
+                f"Column mismatch.\nMissing in incoming: {missing}\nExtra in incoming: {extra}"
+            )
+
+        df_to_write = df_to_write[existing_cols]
+        df_to_write.to_csv(
+            filename,
+            mode="a",
+            index=False,
+            header=False,
+            encoding="utf-8",
+            lineterminator="\n",
         )
 
-        db.add(eeg_data)
-        db.commit()
-        db.refresh(eeg_data)
-        print(f"Saved EPOC X EEG data (session_id={session_id}) to database.")
 
-    except Exception as e:
-        print(f"No data or error encountered: {str(e)}")
+def featurize_cur_sesh_psd(
+    user_id: int,
+    session_id: int,
+    object_count: int,
+    time_elapsed: float,
+    arousal: int,
+    valence: int,
+    fall_speed: float,
+    difficulty_type: str,
+    sensor_contact_quality: bool,
+    df: pd.DataFrame,
+) -> pd.DataFrame:
+    n = len(df)
+    shannons = eeg.shannons_entropy(df)
+    asymm = compute_asymmetry_from_psd(df)
+
+    meta = pd.DataFrame(
+        {
+            "user_id": pd.Series([user_id] * n),
+            "session_id": pd.Series([session_id] * n),
+            "object_count": pd.Series([object_count] * n),
+            "time_elapsed": pd.Series([time_elapsed] * n),
+            "arousal": pd.Series([arousal] * n),
+            "valence": pd.Series([valence] * n),
+            "fall_speed": pd.Series([fall_speed] * n),
+            "difficulty_type": pd.Series([difficulty_type] * n),
+            "sensor_contact_quality": pd.Series([sensor_contact_quality] * n),
+        }
+    )
+    batch = pd.concat([meta, df, shannons, asymm], axis=1)
+
+    return batch
+
+
+def predict_flow(featurized_batch: pd.DataFrame) -> int:
+    batch = featurized_batch.drop(
+        columns=[
+            "user_id",
+            "session_id",
+            "object_count",
+            "time_elapsed",
+            "arousal",
+            "valence",
+            "fall_speed",
+            "difficulty_type",
+            "sensor_contact_quality",
+            "timestamp",
+        ]
+    )
+    batch.reset_index(drop=True)
+    batch = batch.sort_index(axis=1)
+
+
+    arousal = arousal_model.predict(batch)
+    valence = valence_model.predict(batch)
+    return sum(arousal)/len(arousal), sum(valence)/len(valence)

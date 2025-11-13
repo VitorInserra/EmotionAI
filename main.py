@@ -1,24 +1,16 @@
 import os
 import asyncio
-from fastapi import FastAPI, Depends, Request
 from sqlalchemy.orm import Session
-from db import get_db
-from models.VRDataModel import VRDataModel
-from db_handling.EpocXData import insert_eeg_db
 import uvicorn
 import pandas as pd
 import time
-import multiprocessing as mp
 import threading
 import uuid
-from contextlib import asynccontextmanager
-import eeg_data_collection.muse_record as muse_record
 import EpocX
-from db_handling.VRData import VRData
+from .db_handling import EpocXData as EXD
+from .db_handling.VRData import VRData
 from fastapi import FastAPI, Depends
-from pydantic import BaseModel
-from typing import List
-from datetime import datetime
+
 
 global_session_id: str = None
 
@@ -36,12 +28,6 @@ def get_global_session_id():
     if not global_session_id:
         raise ValueError("Global session_id is not set.")
     return global_session_id
-
-
-async def eeg_stream(db: Session = Depends(get_db)):
-    p = mp.Process(target=call_record)
-    p.start()
-    print("Started recording Muse")
 
 
 app = FastAPI()
@@ -62,97 +48,58 @@ def init_epoc_record():
     asyncio.run(EpocX.main())
 
 
-def init_muse_record():
-    while True:
-        f = open("session_data.csv", "w")
-        f.truncate()
-        f.write("timestamp,tp9,af7,af8,tp10,hr\n")
-        f.close()
-        muse_record.start_muse_streaming()
-        time.sleep(3)
-        input("Click enter to start recording:")
-        record_proc = mp.Process(target=call_record, daemon=True)
-        record_proc.start()
-        time.sleep(10)
-        input("Click enter to stop recording:")
-        record_proc.kill()
-        print("Recording stopped.")
-
-
-
-@app.get("/muse-record")
-def call_muse_record():
-    directory = os.getcwd()
-    filename = os.path.join(directory, "session_data.csv")
-    record(duration=0, filename=filename)
-    print("Finished recording Muse")
-
-
-@app.get("/db-insert-eeg")
-async def db_insert_eeg(db: Session = Depends(get_db)):
+@app.post("/datadump")
+async def data_dump(data: VRData):
     session_id = get_global_session_id()
+    start_stamp = data.start_stamp
+    end_stamp = data.end_stamp
+    eye_id = data.eye_id
+    seen_words = data.seen_words
+    text_version = data.text_version
+
     df = pd.DataFrame(EpocX.pow_data_batch)
     EpocX.pow_data_batch.clear()
-    insert_eeg_db(db, session_id, df)
-
-
-@app.post("/datadump")
-async def data_dump(data: VRData, db: Session = Depends(get_db)):
-    start_stamp = data.start_stamp
-    eye_id = data.eye_id
-    eye_interactables = data.eye_interactables
-    end_stamp = data.end_stamp
-    score = data.score
-    test_version = data.test_version
-    end_timer = data.end_timer
-    initial_timer = data.initial_timer
-    rotation_speed = data.rotation_speed
-    obj_rotation = data.obj_rotation
-    expected_rotation = data.expected_rotation
-    obj_size = data.obj_size
-
-    vr_data = VRDataModel(
+    EXD.save_eeg_data(
+        filename="datasets/curr_sesh.csv",
+        user_id=0,
+        session_id=session_id,
         start_stamp=start_stamp,
-        session_id=get_global_session_id(),
-        eye_id=eye_id,
-        eye_interactables=eye_interactables,
         end_stamp=end_stamp,
-        score=score,
-        test_version=test_version,
-        end_timer=end_timer,
-        initial_timer=initial_timer,
-        rotation_speed=rotation_speed,
-        obj_rotation=obj_rotation,
-        expected_rotation=expected_rotation,
-        obj_size=obj_size,
-        description="",
+        eye_id=eye_id,
+        text_version=text_version,
+        seen_words=seen_words,
+        arousal=-1,
+        valence=-1,
+        sensor_contact_quality=EpocX.sensor_contact_quality,
+        df=df,
     )
-
-    db.add(vr_data)
-    db.commit()
-    db.refresh(vr_data)
 
     return {"message": "VR data saved and recent EEG data recorded."}
 
 
-@app.get("/blink-sync")
-async def set_session_id():
-    # start = time.time()
-    # t = threading.Thread(target=init_blink_sync)
-    # t.start()
-    # time.sleep(3)
-    # print(time.time() - start)
-    return
+def save_curr_sesh(path_a: str, path_b: str) -> pd.DataFrame:
+    df_a = pd.read_csv(path_a)
+    cols_a = df_a.columns.tolist()
 
-def init_blink_sync():
-    asyncio.run(EpocX.blink_sync())
+    df_b = pd.read_csv(path_b, usecols=cols_a)
 
-@app.get("/compare-blinks/{blink}/{ts}")
-async def compare_blinks(blink: str, ts: str):
-    print(blink, ts)
+    # Concatenate row-wise
+    combined = pd.concat([df_a, df_b[cols_a]], ignore_index=True)
 
-    return {"message": "ok"}
+    combined.to_csv(path_a, index=False)
+    return combined
 
+@app.post("/quit")
+async def quit():
+    while True:
+        save_session_recordings = input("Do you want to save session recordings? [Y/N] ")
+        if save_session_recordings.lower() == "y":
+            save_curr_sesh("dreamer_models/datasets/EEGO.csv", "dreamer_models/datasets/curr_sesh.csv")
+            break
+        elif save_session_recordings.lower() == "n":
+            sure = input("Are you sure?[Y/N] ")
+            if sure.lower() == "y":
+                break
 
 
 if __name__ == "__main__":
