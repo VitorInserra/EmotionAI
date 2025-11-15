@@ -7,8 +7,8 @@ import time
 import threading
 import uuid
 import EpocX
-from .db_handling import EpocXData as EXD
-from .db_handling.VRData import VRData
+from db_handling import EpocXData as EXD
+from db_handling.VRData import VRData
 from fastapi import FastAPI, Depends
 
 
@@ -57,8 +57,7 @@ async def data_dump(data: VRData):
     seen_words = data.seen_words
     text_version = data.text_version
 
-    df = pd.DataFrame(EpocX.pow_data_batch)
-    EpocX.pow_data_batch.clear()
+    df = EpocX.pow_data_batch
     EXD.save_eeg_data(
         filename="datasets/curr_sesh.csv",
         user_id=0,
@@ -73,6 +72,7 @@ async def data_dump(data: VRData):
         sensor_contact_quality=EpocX.sensor_contact_quality,
         df=df,
     )
+    EpocX.pow_data_batch.drop(EpocX.pow_data_batch.index, inplace=True)
 
     return {"message": "VR data saved and recent EEG data recorded."}
 
@@ -89,18 +89,15 @@ def save_curr_sesh(path_a: str, path_b: str) -> pd.DataFrame:
     combined.to_csv(path_a, index=False)
     return combined
 
-@app.post("/quit")
-async def quit():
+
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="0.0.0.0", port=8083, reload=False)
     while True:
         save_session_recordings = input("Do you want to save session recordings? [Y/N] ")
         if save_session_recordings.lower() == "y":
-            save_curr_sesh("dreamer_models/datasets/EEGO.csv", "dreamer_models/datasets/curr_sesh.csv")
+            save_curr_sesh("datasets/DECOD.csv", "datasets/curr_sesh.csv")
             break
         elif save_session_recordings.lower() == "n":
             sure = input("Are you sure?[Y/N] ")
             if sure.lower() == "y":
                 break
-
-
-if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8083, reload=False)

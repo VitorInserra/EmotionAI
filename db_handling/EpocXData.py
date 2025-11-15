@@ -14,14 +14,12 @@ def save_eeg_data(
     end_stamp: str,
     eye_id: str,
     text_version: str,
-    seen_words: str,
+    seen_words: dict[str, float],
     arousal: int,
     valence: int,
     sensor_contact_quality: bool,
     df: pd.DataFrame,
 ) -> int:
-    if df is None or df.empty:
-        return 0
 
     df_to_write = df.copy()
     df_to_write.insert(0, "user_id", user_id)
@@ -30,10 +28,10 @@ def save_eeg_data(
     df_to_write.insert(3, "end_stamp", end_stamp)
     df_to_write.insert(4, "eye_id", eye_id)
     df_to_write.insert(5, "text_version", text_version)
-    df_to_write.insert(5, "seen_words", seen_words)
-    df_to_write.insert(6, "arousal", arousal)
-    df_to_write.insert(7, "valence", valence)
-    df_to_write.insert(8, "sensor_contact_quality", sensor_contact_quality)
+    df_to_write.insert(6, "seen_words", [seen_words] * len(df_to_write))
+    df_to_write.insert(7, "arousal", arousal)
+    df_to_write.insert(8, "valence", valence)
+    df_to_write.insert(9, "sensor_contact_quality", sensor_contact_quality)
 
     file_exists = os.path.exists(filename)
 

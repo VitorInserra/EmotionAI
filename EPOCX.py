@@ -133,7 +133,8 @@ async def handle_incoming_data(websocket):
             pow_data_batch.loc[len(pow_data_batch)] = row
 
             if len(pow_data_batch) == batch_size:
-                pow_data_batch.clear()
+                pow_data_batch.drop(pow_data_batch.index, inplace=True)
+
 
         if "dev" in data:
             dev = list(data["dev"][2])
