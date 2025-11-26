@@ -101,3 +101,8 @@ if __name__ == "__main__":
             sure = input("Are you sure?[Y/N] ")
             if sure.lower() == "y":
                 break
+
+# 1 - 10: neutral
+# 11 - 20: low
+# 21 - 30: high
+
