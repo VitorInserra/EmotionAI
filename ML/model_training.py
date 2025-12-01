@@ -45,6 +45,7 @@ def build_decod_lstm_sequences(
     df: pd.DataFrame,
     feature_cols: List[str],
     target_col: str = "arousal",
+    group_by: str = "session_id",
     thresh: float = 0.5,
     fixed_T: Optional[int] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
@@ -52,7 +53,7 @@ def build_decod_lstm_sequences(
     Build (num_trials, timesteps, n_features) and (num_trials,) from EEGo
     window-level data.
     """
-    groups = df.groupby(["session_id"], sort=False)
+    groups = df.groupby([group_by], sort=False)
 
     X_seqs: list[np.ndarray] = []
     y_labels: list[float] = []
