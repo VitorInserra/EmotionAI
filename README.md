@@ -1,2 +1,20 @@
 # EmotionAI
-The EmotionAI repository contains all code and feature tables used in this work, including the DECOD dataset collected for this experiment and pre-computed features for DECOD and DREAMER. The main notebooks map directly to the methods and results described in the report: \texttt{DECOD\_models.ipynb} trains and evaluates models on the collected DECOD data, \texttt{Transfer\_learning\_models.ipynb} reproduces the DREAMER-based transfer-learning results, \texttt{stamp\_models.ipynb} implements the per-word batch (``stamp'') models, and \texttt{Eye\_tracking\_analysis.ipynb} performs the delay and synchronization analysis between eye tracking and EEG. Text files in the repository store saved DREAMER results (e.g., accuracies and cross-validation summaries).
+## Notebooks Overview
+
+This repository contains pre-computed feature tables and analyses for both the **DECOD** and **DREAMER** datasets.
+
+The main notebooks map directly to the methods and results described in the report:
+
+- **`DECOD_models.ipynb`**  
+  Trains and evaluates models on the collected DECOD data.
+
+- **`Transfer_learning_models.ipynb`**  
+  Reproduces the DREAMER-based transfer-learning results.
+
+- **`stamp_models.ipynb`**  
+  Implements the per-word batch (“stamp”) models.
+
+- **`Eye_tracking_analysis.ipynb`**  
+  Performs the delay and synchronization analysis between eye tracking (ET) and EEG.
+
+In addition, several `.txt` files in the repository store saved DREAMER results (e.g., accuracies and cross-validation summaries).
