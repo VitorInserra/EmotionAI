@@ -1,0 +1,10 @@
+metric,mean,std,min,max
+fold,2.0,1.0,1.0,3.0
+n_train_trials,2.0,0.0,2.0,2.0
+n_test_trials,1.0,0.0,1.0,1.0
+n_train_sessions,1.0,0.0,1.0,1.0
+n_test_sessions,1.0,0.0,1.0,1.0
+best_val_loss,1.2924419244130452,0.6165239387803132,0.5813424587249756,1.6772308349609375
+best_epoch,6.0,8.660254037844387,1.0,16.0
+test_accuracy,0.0,0.0,0.0,0.0
+test_f1_macro,0.0,0.0,0.0,0.0

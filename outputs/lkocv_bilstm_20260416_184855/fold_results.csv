@@ -1,0 +1,4 @@
+fold,n_train_trials,n_test_trials,n_train_sessions,n_test_sessions,best_val_loss,best_epoch,test_accuracy,test_f1_macro
+1,2,1,1,1,0.5813424587249756,1,0.0,0.0
+2,2,1,1,1,1.6187524795532227,1,0.0,0.0
+3,2,1,1,1,1.6772308349609375,16,0.0,0.0

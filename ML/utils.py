@@ -111,7 +111,7 @@ HOMOLOGOUS_PAIRS = [
 ]
 
 
-AS_BANDS = {"delta", "theta", "alpha", "beta", "gamma"}
+AS_BANDS = {"delta", "theta", "alpha", "beta", "betaL", "betaH", "gamma"}
 
 
 def compute_asymmetry_from_psd(

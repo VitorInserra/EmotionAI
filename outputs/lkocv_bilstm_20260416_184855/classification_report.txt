@@ -1,0 +1,10 @@
+              precision    recall  f1-score   support
+
+        LALV       0.00      0.00      0.00       1.0
+        LAHV       0.00      0.00      0.00       1.0
+        HAHV       0.00      0.00      0.00       0.0
+        HALV       0.00      0.00      0.00       1.0
+
+    accuracy                           0.00       3.0
+   macro avg       0.00      0.00      0.00       3.0
+weighted avg       0.00      0.00      0.00       3.0

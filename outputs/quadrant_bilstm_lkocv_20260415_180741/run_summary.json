@@ -1,0 +1,37 @@
+{
+  "base_dataset": "/Users/tolas/Desktop/HCI 590/EmotionAI/datasets/base_dataset.csv",
+  "n_rows": 47,
+  "n_trials": 3,
+  "n_sessions": 1,
+  "max_sequence_length": 29,
+  "feature_dim": 154,
+  "class_counts_trials": {
+    "LALV": 1,
+    "LAHV": 1,
+    "HAHV": 0,
+    "HALV": 1
+  },
+  "hyperparameters": {
+    "lstm_units": 64,
+    "dense_units": 32,
+    "dropout": 0.3,
+    "learning_rate": 0.001,
+    "batch_size": 8
+  },
+  "leave_k_out": 1,
+  "n_folds": 3,
+  "overall_accuracy": 0.0,
+  "overall_f1_macro": 0.0,
+  "overall_f1_weighted": 0.0,
+  "mean_fold_accuracy": 0.0,
+  "per_class_accuracy": {
+    "LALV": 0.0,
+    "LAHV": 0.0,
+    "HAHV": NaN,
+    "HALV": 0.0
+  },
+  "entropy_backend": "eegproc",
+  "note": "LKOCV here means exact leave-1-trials/images-out CV using sklearn LeavePOut.",
+  "final_model_bundle_path": "/Users/tolas/Desktop/HCI 590/EmotionAI/models/quadrant_bilstm_lkocv_bundle.joblib",
+  "final_model_path": "/Users/tolas/Desktop/HCI 590/EmotionAI/models/bilstm_lkocv.keras"
+}

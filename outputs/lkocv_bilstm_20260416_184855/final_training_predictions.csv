@@ -1,0 +1,4 @@
+trial_id,session_id,image_name,y_true_idx,y_pred_idx,y_true,y_pred,correct
+session_20260415T211453_0054fb54__1,session_20260415T211453_0054fb54,Reading_College.png,0,2,LALV,HAHV,0
+session_20260415T211453_0054fb54__2,session_20260415T211453_0054fb54,sad_cartoon.png,1,1,LAHV,LAHV,1
+session_20260415T211453_0054fb54__3,session_20260415T211453_0054fb54,Grok_titan.jpg,3,1,HALV,LAHV,0

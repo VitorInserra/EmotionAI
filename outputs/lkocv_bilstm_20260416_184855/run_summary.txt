@@ -1,0 +1,75 @@
+
+Output directory: /Users/tolas/Desktop/HCI 590/EmotionAI/outputs/lkocv_bilstm_20260416_184855
+Trials: 3
+Sessions: 1
+Feature dimension: 210
+Global max sequence length: 29
+Target column: user_predicted_code
+Leave-k-out setting: K = 1
+Total folds: 3
+Classification target order: LALV, LAHV, HAHV, HALV
+
+======================================================================
+FOLD 1/3
+Train sessions: ['session_20260415T211453_0054fb54']
+Held-out trials: ['session_20260415T211453_0054fb54__1']
+Held-out images: ['Reading_College.png']
+
+Fold test results:
+  best_val_loss: 0.581342
+  best_epoch: 1
+  test_accuracy: 0.000000
+  test_f1_macro: 0.000000
+
+======================================================================
+FOLD 2/3
+Train sessions: ['session_20260415T211453_0054fb54']
+Held-out trials: ['session_20260415T211453_0054fb54__2']
+Held-out images: ['sad_cartoon.png']
+
+Fold test results:
+  best_val_loss: 1.618752
+  best_epoch: 1
+  test_accuracy: 0.000000
+  test_f1_macro: 0.000000
+
+======================================================================
+FOLD 3/3
+Train sessions: ['session_20260415T211453_0054fb54']
+Held-out trials: ['session_20260415T211453_0054fb54__3']
+Held-out images: ['Grok_titan.jpg']
+
+Fold test results:
+  best_val_loss: 1.677231
+  best_epoch: 16
+  test_accuracy: 0.000000
+  test_f1_macro: 0.000000
+
+======================================================================
+FINAL LKOCV RESULTS
+ fold  n_train_trials  n_test_trials  n_train_sessions  n_test_sessions  best_val_loss  best_epoch  test_accuracy  test_f1_macro
+    1               2              1                 1                1       0.581342           1            0.0            0.0
+    2               2              1                 1                1       1.618752           1            0.0            0.0
+    3               2              1                 1                1       1.677231          16            0.0            0.0
+
+Mean across folds:
+fold                2.000000
+n_train_trials      2.000000
+n_test_trials       1.000000
+n_train_sessions    1.000000
+n_test_sessions     1.000000
+best_val_loss       1.292442
+best_epoch          6.000000
+test_accuracy       0.000000
+test_f1_macro       0.000000
+
+Saved files:
+  - outputs/lkocv_bilstm_20260416_184855/fold_results.csv
+  - outputs/lkocv_bilstm_20260416_184855/fold_summary_stats.csv
+  - outputs/lkocv_bilstm_20260416_184855/overall_prediction_metrics.csv
+  - outputs/lkocv_bilstm_20260416_184855/all_lkocv_predictions.csv
+  - outputs/lkocv_bilstm_20260416_184855/classification_report.txt
+  - outputs/lkocv_bilstm_20260416_184855/fold_accuracy.png
+  - outputs/lkocv_bilstm_20260416_184855/confusion_matrix.png
+  - outputs/lkocv_bilstm_20260416_184855/final_training_history.png
+  - outputs/lkocv_bilstm_20260416_184855/final_training_predictions.csv

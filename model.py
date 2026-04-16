@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 import os
-import pickle
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any
 
+import joblib
+import numpy as np
 import pandas as pd
+import tensorflow as tf
+import eegproc as eeg
 
-try:
-    import joblib  # type: ignore
-except Exception:  # noqa: BLE001
-    joblib = None
-
+from ML.utils import HOMOLOGOUS_PAIRS, compute_asymmetry_from_psd
 
 CHANNELS = [
     "AF3",
@@ -31,6 +31,18 @@ CHANNELS = [
 ]
 BANDS = ["theta", "alpha", "betaL", "betaH", "gamma"]
 POW_COLUMNS = [f"{channel}_{band}" for channel in CHANNELS for band in BANDS]
+ENTROPY_COLUMNS = [f"{channel}_{band}_entropy" for channel in CHANNELS for band in BANDS]
+ASYMMETRY_COLUMNS = [
+    f"{right}_{left}_{band}_{kind}"
+    for left, right in HOMOLOGOUS_PAIRS
+    for band in BANDS
+    for kind in ("da", "ra")
+]
+DEFAULT_FEATURE_COLUMNS = POW_COLUMNS + ENTROPY_COLUMNS + ASYMMETRY_COLUMNS
+
+WINDOW_SECONDS = 2.0
+WINDOW_OVERLAP_SECONDS = 0.5
+WINDOW_STEP_SECONDS = WINDOW_SECONDS - WINDOW_OVERLAP_SECONDS
 
 PREDICTION_MAP = {
     "1": "LALV",
@@ -49,119 +61,227 @@ PREDICTION_MAP = {
 
 
 class QuadrantModel:
-    """
-    Lightweight wrapper around a pre-trained quadrant classifier.
+    """Strict inference wrapper for the saved quadrant model.
 
-    Expected artifacts:
-      - MODEL_ARTIFACT environment variable, or
-      - ./models/quadrant_model.joblib, or
-      - ./models/quadrant_model.pkl
-
-    Supported object shapes:
-      1) a raw estimator with `.predict`
-      2) a dict bundle with keys such as:
-         {"model": estimator, "scaler": scaler, "feature_names": [...]}.
+    Behavior:
+      - requires a valid saved artifact at construction time
+      - requires eegproc for Shannon entropy featurization
+      - raises immediately on missing or malformed artifacts
+      - supports sklearn bundles and keras BiLSTM bundles
     """
 
-    def __init__(self, artifact_path: Optional[str | Path] = None) -> None:
+    def __init__(self, artifact_path: str | Path | None = None) -> None:
         self.artifact_path = self._resolve_artifact_path(artifact_path)
-        self.model: Optional[Any] = None
-        self.scaler: Optional[Any] = None
-        self.feature_names: list[str] = POW_COLUMNS.copy()
-        self.available = False
-        self.load_error: Optional[str] = None
+        self.bundle = self._load_bundle(self.artifact_path)
 
-        if self.artifact_path is not None:
-            self._load_artifact(self.artifact_path)
+        self.model_type = str(self.bundle.get("model_type", "sklearn"))
+        self.feature_names = list(self.bundle.get("feature_names", DEFAULT_FEATURE_COLUMNS))
+        self.class_order = list(self.bundle.get("class_order", ["LALV", "LAHV", "HAHV", "HALV"]))
+        self.max_len = int(self.bundle.get("max_len", 1))
 
-    def _resolve_artifact_path(self, artifact_path: Optional[str | Path]) -> Optional[Path]:
+        self.scaler: Any | None = self.bundle.get("scaler")
+        self.scaler_mean_: np.ndarray | None = None
+        self.scaler_scale_: np.ndarray | None = None
+
+        if self.model_type.startswith("keras_bilstm"):
+            keras_model_path = self.bundle.get("keras_model_path")
+            if not keras_model_path:
+                raise ValueError("Keras bundle is missing 'keras_model_path'.")
+            keras_path = Path(keras_model_path)
+            if not keras_path.is_absolute():
+                keras_path = (self.artifact_path.parent / keras_path).resolve()
+            if not keras_path.exists():
+                raise FileNotFoundError(f"Keras model file not found: {keras_path}")
+            self.model = tf.keras.models.load_model(keras_path)
+            self.scaler_mean_ = np.asarray(self.bundle["scaler_mean"], dtype=np.float32)
+            self.scaler_scale_ = np.asarray(self.bundle["scaler_scale"], dtype=np.float32)
+        else:
+            self.model = self.bundle.get("model") or self.bundle.get("estimator")
+            if self.model is None:
+                raise ValueError("Sklearn bundle is missing 'model' or 'estimator'.")
+            if not hasattr(self.model, "predict"):
+                raise TypeError("Loaded estimator does not provide predict().")
+
+    def _resolve_artifact_path(self, artifact_path: str | Path | None) -> Path:
         if artifact_path is not None:
             path = Path(artifact_path).expanduser().resolve()
-            return path if path.exists() else None
+            if not path.exists():
+                raise FileNotFoundError(f"Model artifact not found: {path}")
+            return path
 
         env_path = os.environ.get("MODEL_ARTIFACT")
         if env_path:
             path = Path(env_path).expanduser().resolve()
-            if path.exists():
-                return path
+            if not path.exists():
+                raise FileNotFoundError(f"MODEL_ARTIFACT points to a missing file: {path}")
+            return path
 
         base_dir = Path(__file__).resolve().parent
         candidates = [
+            base_dir / "online_state" / "online_model_bundle.joblib",
+            base_dir / "models" / "quadrant_bilstm_lkocv_bundle.joblib",
+            base_dir / "models" / "quadrant_bilstm_classifier_bundle.joblib",
             base_dir / "models" / "quadrant_model.joblib",
-            base_dir / "models" / "quadrant_model.pkl",
         ]
         for candidate in candidates:
             if candidate.exists():
-                return candidate
-        return None
+                return candidate.resolve()
 
-    def _load_artifact(self, path: Path) -> None:
-        try:
-            if path.suffix == ".joblib":
-                if joblib is None:
-                    raise RuntimeError("joblib is not installed.")
-                artifact = joblib.load(path)
-            else:
-                with path.open("rb") as handle:
-                    artifact = pickle.load(handle)
+        raise FileNotFoundError(
+            "No model artifact found. Expected one of: "
+            f"{', '.join(str(path) for path in candidates)}"
+        )
 
-            if isinstance(artifact, dict):
-                self.model = artifact.get("model") or artifact.get("estimator")
-                self.scaler = artifact.get("scaler")
-                feature_names = artifact.get("feature_names")
-                if feature_names:
-                    self.feature_names = list(feature_names)
-            else:
-                self.model = artifact
-                if hasattr(self.model, "feature_names_in_"):
-                    self.feature_names = list(self.model.feature_names_in_)
+    def _load_bundle(self, artifact_path: Path) -> dict[str, Any]:
+        artifact = joblib.load(artifact_path)
+        if isinstance(artifact, dict):
+            return artifact
+        return {"model_type": "sklearn", "model": artifact, "feature_names": DEFAULT_FEATURE_COLUMNS}
 
-            self.available = self.model is not None and hasattr(self.model, "predict")
-            if not self.available:
-                raise RuntimeError("Artifact loaded, but no estimator with a predict() method was found.")
-        except Exception as exc:  # noqa: BLE001
-            self.available = False
-            self.load_error = str(exc)
-
-    def predict_code(self, psd_features: Mapping[str, float]) -> Optional[str]:
-        if not self.available or self.model is None:
-            return None
-
-        row = {column: float(psd_features.get(column, 0.0)) for column in self.feature_names}
-        frame = pd.DataFrame([row], columns=self.feature_names).fillna(0.0)
-
-        x = frame
-        if self.scaler is not None:
-            x = self.scaler.transform(frame)
-
-        raw_pred = self.model.predict(x)
-        if isinstance(raw_pred, (list, tuple)):
-            pred = raw_pred[0]
+    def _coerce_psd_frame(
+        self,
+        psd_input: Mapping[str, float] | Sequence[Mapping[str, float]] | pd.DataFrame,
+    ) -> pd.DataFrame:
+        if isinstance(psd_input, pd.DataFrame):
+            frame = psd_input.copy()
+        elif isinstance(psd_input, Mapping):
+            frame = pd.DataFrame([dict(psd_input)])
         else:
-            try:
-                pred = raw_pred[0]
-            except Exception:
-                pred = raw_pred
-        return normalize_prediction(pred)
+            frame = pd.DataFrame([dict(row) for row in psd_input])
+
+        if frame.empty:
+            raise ValueError("Received empty PSD input.")
+
+        for column in POW_COLUMNS:
+            if column not in frame.columns:
+                raise ValueError(f"PSD input is missing required column: {column}")
+
+        work = frame[POW_COLUMNS].apply(pd.to_numeric, errors="raise").copy()
+
+        if "timestamp" in frame.columns:
+            work["timestamp"] = pd.to_numeric(frame["timestamp"], errors="raise")
+        elif "sample_timestamp" in frame.columns:
+            sample_ts = frame["sample_timestamp"]
+            if pd.api.types.is_numeric_dtype(sample_ts):
+                work["timestamp"] = pd.to_numeric(sample_ts, errors="raise")
+            else:
+                ts = pd.to_datetime(sample_ts, errors="raise", utc=True)
+                work["timestamp"] = ts.astype("int64") / 1e9
+
+        return work
+
+    def build_windowed_psd_sequence(
+        self,
+        psd_input: Mapping[str, float] | Sequence[Mapping[str, float]] | pd.DataFrame,
+        window_seconds: float = WINDOW_SECONDS,
+        overlap_seconds: float = WINDOW_OVERLAP_SECONDS,
+    ) -> pd.DataFrame:
+        work = self._coerce_psd_frame(psd_input)
+
+        if "timestamp" not in work.columns or len(work) == 1:
+            averaged = work[POW_COLUMNS].mean(axis=0, numeric_only=True).to_frame().T
+            averaged["window_start"] = np.nan
+            averaged["window_end"] = np.nan
+            averaged["n_samples"] = len(work)
+            return averaged
+
+        if overlap_seconds >= window_seconds:
+            raise ValueError("overlap_seconds must be smaller than window_seconds.")
+
+        times = pd.to_numeric(work["timestamp"], errors="raise").to_numpy(dtype=np.float64)
+        start_time = float(times.min())
+        end_time = float(times.max())
+        step = window_seconds - overlap_seconds
+
+        if end_time - start_time <= window_seconds:
+            window_starts = [start_time]
+        else:
+            last_full_start = end_time - window_seconds
+            window_starts = list(np.arange(start_time, last_full_start + 1e-9, step))
+            final_start = max(start_time, end_time - window_seconds)
+            if not window_starts or abs(window_starts[-1] - final_start) > 1e-6:
+                window_starts.append(final_start)
+
+        rows: list[dict[str, float]] = []
+        for window_start in window_starts:
+            window_end = window_start + window_seconds
+            mask = (times >= window_start) & (times <= window_end)
+            window = work.loc[mask, POW_COLUMNS]
+            if window.empty:
+                continue
+            means = window.mean(axis=0, numeric_only=True)
+            row = {column: float(means[column]) for column in POW_COLUMNS}
+            row["window_start"] = float(window_start)
+            row["window_end"] = float(window_end)
+            row["n_samples"] = int(len(window))
+            rows.append(row)
+
+        if not rows:
+            raise ValueError("No valid PSD windows were produced from the input.")
+
+        return pd.DataFrame(rows)
+
+    def featurize_psd(
+        self,
+        psd_input: Mapping[str, float] | Sequence[Mapping[str, float]] | pd.DataFrame,
+    ) -> pd.DataFrame:
+        windowed_psd = self.build_windowed_psd_sequence(psd_input)
+        psd_only = windowed_psd[POW_COLUMNS]
+        entropy_frame = eeg.shannons_entropy(psd_only, fs=128)
+        asymmetry_frame = compute_asymmetry_from_psd(psd_only)
+        feature_frame = pd.concat([psd_only, entropy_frame, asymmetry_frame], axis=1)
+        return feature_frame[self.feature_names].fillna(0.0)
+
+    def _scale_sequence(self, feature_frame: pd.DataFrame) -> np.ndarray:
+        frame = feature_frame[self.feature_names]
+        if self.scaler is not None:
+            return np.asarray(self.scaler.transform(frame), dtype=np.float32)
+        if self.scaler_mean_ is None or self.scaler_scale_ is None:
+            return frame.to_numpy(dtype=np.float32)
+        scale = np.where(self.scaler_scale_ == 0.0, 1.0, self.scaler_scale_)
+        arr = frame.to_numpy(dtype=np.float32)
+        return ((arr - self.scaler_mean_) / scale).astype(np.float32)
+
+    def predict_code(
+        self,
+        psd_input: Mapping[str, float] | Sequence[Mapping[str, float]] | pd.DataFrame,
+    ) -> str:
+        feature_frame = self.featurize_psd(psd_input)
+
+        if self.model_type.startswith("keras_bilstm"):
+            scaled_seq = self._scale_sequence(feature_frame)
+            max_len = max(1, int(self.max_len))
+            n_features = scaled_seq.shape[1]
+            x = np.zeros((1, max_len, n_features), dtype=np.float32)
+            seq_len = min(len(scaled_seq), max_len)
+            x[0, :seq_len, :] = scaled_seq[:seq_len]
+            probs = self.model.predict(x, verbose=0)
+            pred_idx = int(np.argmax(probs[0]))
+            if pred_idx < 0 or pred_idx >= len(self.class_order):
+                raise ValueError(f"Predicted class index out of range: {pred_idx}")
+            prediction = self.class_order[pred_idx]
+        else:
+            aggregated = feature_frame.mean(axis=0, numeric_only=True).to_frame().T
+            x: Any = aggregated
+            if self.scaler is not None:
+                x = self.scaler.transform(aggregated)
+            raw_pred = self.model.predict(x)
+            prediction = raw_pred[0] if hasattr(raw_pred, "__getitem__") else raw_pred
+
+        normalized = normalize_prediction(prediction)
+        if normalized is None:
+            raise ValueError(f"Could not normalize prediction: {prediction}")
+        return normalized
 
     def status_text(self) -> str:
-        if self.available:
-            name = self.artifact_path.name if self.artifact_path is not None else "custom model"
-            return f"model loaded: {name}"
-        if self.load_error:
-            return f"model unavailable: {self.load_error}"
-        return "model unavailable: no artifact found"
+        return (
+            f"model loaded: {self.artifact_path.name}; "
+            f"2.0s windows / 0.5s overlap + eegproc entropy + asymmetry"
+        )
 
 
-def normalize_prediction(prediction: Any) -> Optional[str]:
-    if prediction is None:
-        return None
-
-    try:
-        if hasattr(prediction, "item"):
-            prediction = prediction.item()
-    except Exception:
-        pass
-
+def normalize_prediction(prediction: Any) -> str | None:
+    if hasattr(prediction, "item"):
+        prediction = prediction.item()
     key = str(prediction).strip().upper()
     return PREDICTION_MAP.get(key)
