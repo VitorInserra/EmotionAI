@@ -1,24 +1,3 @@
-# ============================================================
-# bilstm_lkocv_classification.py
-#
-# Purpose:
-#   - Read the base EEG dataset
-#   - Build engineered EEG features from PSD rows
-#   - Build trial-level variable-length sequences
-#   - Run leave-k-out cross-validation across trials/images
-#   - Train a basic TensorFlow BiLSTM for 4-class classification
-#   - Save metrics, predictions, and plots to outputs/
-#
-# Important:
-#   - The target column is "user_predicted_code"
-#   - Default evaluation is true LOOCV because LEAVE_K_OUT = 1
-#   - Increase LEAVE_K_OUT to run exact leave-k-out CV
-#
-# Input:
-#   datasets/base_dataset.csv   (preferred)
-#   base_dataset.csv            (fallback)
-# ============================================================
-
 from __future__ import annotations
 
 import csv
@@ -30,17 +9,15 @@ from pathlib import Path
 from typing import List
 
 import matplotlib
-matplotlib.use("Agg")  # important for SLURM / headless environments
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, f1_score
-from sklearn.model_selection import LeavePOut
 from sklearn.preprocessing import StandardScaler
 
-from utils import HOMOLOGOUS_PAIRS, compute_asymmetry_from_psd
+from utils import compute_asymmetry_from_psd
 
 import eegproc as eeg
 import joblib
@@ -59,78 +36,50 @@ GROUP_COLUMN = "session_id"
 TIME_COLUMN = "timestep_idx"
 TARGET_COLUMN = "user_predicted_code"
 IMAGE_COLUMN = "image_name"
-TRIAL_INDEX_COLUMN = "trial_index"
 SAMPLE_TIME_COLUMN = "sample_timestamp"
+TRIAL_START_COLUMN = "trial_started_at"
+TRIAL_END_COLUMN = "trial_ended_at"
 
 CLASS_ORDER = ["LALV", "LAHV", "HAHV", "HALV"]
 LABEL_TO_INDEX = {label: idx for idx, label in enumerate(CLASS_ORDER)}
 INDEX_TO_LABEL = {idx: label for label, idx in LABEL_TO_INDEX.items()}
 
-# Leave-k-out CV
-LEAVE_K_OUT = 1
-
-# Training
+LEAVE_K_OUT = 15  # fold size in held-out pictures, not combinatorial leave-p-out
 MAX_EPOCHS = 250
 EARLY_STOPPING_PATIENCE = 30
 SEED = 42
 VERBOSE_FIT = 0
+FS = 128
 
-# Output management
 OUTPUT_ROOT = Path("outputs")
 RUN_STAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
 RUN_OUTPUT_DIR = OUTPUT_ROOT / f"lkocv_bilstm_{RUN_STAMP}"
 MODEL_DIR = Path("models")
-
-# Final model save
 SAVE_FINAL_MODEL = True
 
-# Hyperparameters
 HYPERPARAMS = {
     "lstm_units": 64,
     "dense_units": 32,
     "dropout": 0.30,
-    "learning_rate": 1e-3,
+    "learning_rate": 1e-4,
     "batch_size": 8,
 }
 
 CHANNELS = [
-    "AF3",
-    "F7",
-    "F3",
-    "FC5",
-    "T7",
-    "P7",
-    "O1",
-    "O2",
-    "P8",
-    "T8",
-    "FC6",
-    "F4",
-    "F8",
-    "AF4",
+    "AF3", "F7", "F3", "FC5", "T7", "P7", "O1", "O2", "P8", "T8", "FC6", "F4", "F8", "AF4",
 ]
 BANDS = ["theta", "alpha", "betaL", "betaH", "gamma"]
 POW_COLUMNS = [f"{ch}_{band}" for ch in CHANNELS for band in BANDS]
-ENTROPY_COLUMNS = [f"{ch}_{band}_entropy" for band in BANDS for ch in CHANNELS]
-ASYMMETRY_COLUMNS = [
-    f"{right}_{left}_{band}_{kind}"
-    for left, right in HOMOLOGOUS_PAIRS
-    for band in BANDS
-    for kind in ("da", "ra")
-]
-FEATURE_COLUMNS = POW_COLUMNS + ENTROPY_COLUMNS + ASYMMETRY_COLUMNS
 
-# Metadata columns to exclude from features after feature table creation
 META_COLUMNS = {
-    "session_id",
-    "trial_id",
-    "trial_index",
-    "timestep_idx",
-    "image_name",
-    "trial_started_at",
-    "trial_ended_at",
+    GROUP_COLUMN,
+    SEQUENCE_ID_COLUMN,
+    TIME_COLUMN,
+    IMAGE_COLUMN,
+    TRIAL_START_COLUMN,
+    TRIAL_END_COLUMN,
     "time_elapsed_seconds",
-    "sample_timestamp",
+    SAMPLE_TIME_COLUMN,
     "user_predicted_key",
     TARGET_COLUMN,
     "user_predicted_label",
@@ -163,8 +112,7 @@ def prepare_output_dir() -> Path:
 
 
 def save_text_summary(text: str, output_dir: Path, filename: str = "run_summary.txt") -> None:
-    path = output_dir / filename
-    with open(path, "w", encoding="utf-8") as f:
+    with open(output_dir / filename, "w", encoding="utf-8") as f:
         f.write(text)
 
 
@@ -178,9 +126,9 @@ def save_plot_fold_accuracy(predictions_df: pd.DataFrame, output_dir: Path) -> N
     plt.figure(figsize=(8, 4))
     plt.bar(fold_acc["fold"], fold_acc["fold_accuracy"])
     plt.ylim(0.0, 1.05)
-    plt.xlabel(f"Leave-{LEAVE_K_OUT}-out Fold")
+    plt.xlabel(f"Fold (held-out size = {LEAVE_K_OUT})")
     plt.ylabel("Accuracy")
-    plt.title(f"BiLSTM Leave-{LEAVE_K_OUT}-out Fold Accuracy")
+    plt.title("BiLSTM Non-Overlapping Fold Accuracy")
     plt.grid(True, axis="y", alpha=0.3)
     plt.tight_layout()
     plt.savefig(output_dir / "fold_accuracy.png", dpi=300, bbox_inches="tight")
@@ -190,7 +138,7 @@ def save_plot_fold_accuracy(predictions_df: pd.DataFrame, output_dir: Path) -> N
 def save_plot_confusion_matrix(cm: np.ndarray, output_dir: Path) -> None:
     plt.figure(figsize=(6, 5))
     plt.imshow(cm, interpolation="nearest")
-    plt.title(f"BiLSTM Leave-{LEAVE_K_OUT}-out Confusion Matrix")
+    plt.title("BiLSTM Confusion Matrix")
     plt.colorbar()
 
     ticks = np.arange(len(CLASS_ORDER))
@@ -220,12 +168,8 @@ def save_plot_final_history(history: tf.keras.callbacks.History, output_dir: Pat
     plt.figure(figsize=(8, 5))
     if "loss" in history.history:
         plt.plot(history.history["loss"], label="train_loss")
-    if "val_loss" in history.history:
-        plt.plot(history.history["val_loss"], label="val_loss")
     if "accuracy" in history.history:
         plt.plot(history.history["accuracy"], label="train_accuracy")
-    if "val_accuracy" in history.history:
-        plt.plot(history.history["val_accuracy"], label="val_accuracy")
     plt.xlabel("Epoch")
     plt.ylabel("Value")
     plt.title("Final Training History")
@@ -245,9 +189,25 @@ def resolve_input_feature_table() -> Path:
         if path.exists():
             return path
     raise FileNotFoundError(
-        "Could not find base dataset. Looked for: "
-        + ", ".join(INPUT_FEATURE_TABLE_CANDIDATES)
+        "Could not find base dataset. Looked for: " + ", ".join(INPUT_FEATURE_TABLE_CANDIDATES)
     )
+
+
+def _deduplicate_columns(df: pd.DataFrame) -> pd.DataFrame:
+    if not df.columns.duplicated().any():
+        return df
+    return df.loc[:, ~df.columns.duplicated()].copy()
+
+
+def _normalize_timestamp_column(series: pd.Series) -> pd.Series:
+    return pd.to_datetime(series, errors="coerce", utc=True)
+
+
+def _build_trial_key_strings(df: pd.DataFrame) -> pd.Series:
+    image_key = df[IMAGE_COLUMN].fillna("missing_image").astype(str)
+    start_key = df[TRIAL_START_COLUMN].dt.strftime("%Y%m%dT%H%M%S.%fZ").fillna("missing_start")
+    end_key = df[TRIAL_END_COLUMN].dt.strftime("%Y%m%dT%H%M%S.%fZ").fillna("missing_end")
+    return image_key + "__" + start_key + "__" + end_key
 
 
 def load_feature_table() -> pd.DataFrame:
@@ -256,50 +216,56 @@ def load_feature_table() -> pd.DataFrame:
     with path.open("r", newline="", encoding="utf-8") as handle:
         reader = csv.reader(handle)
         header = next(reader)
-        expanded_header = header[:6] + [SAMPLE_TIME_COLUMN] + header[6:]
-        normalized_rows: list[list[str]] = []
+        has_sample_timestamp = SAMPLE_TIME_COLUMN in header
 
+        if has_sample_timestamp:
+            expanded_header = header
+        else:
+            expanded_header = header[:6] + [SAMPLE_TIME_COLUMN] + header[6:]
+
+        normalized_rows: list[list[str]] = []
         for row in reader:
-            if len(row) == len(header):
-                row = row[:6] + [""] + row[6:]
-            elif len(row) != len(header) + 1:
-                raise ValueError(
-                    f"Unexpected row length {len(row)} in {path}. "
-                    f"Expected {len(header)} or {len(header)+1}. Row head: {row[:10]}"
-                )
-            normalized_rows.append(row)
+            if has_sample_timestamp:
+                if len(row) != len(header):
+                    raise ValueError(
+                        f"Unexpected row length {len(row)} in {path}. Expected {len(header)}. Row head: {row[:10]}"
+                    )
+                normalized_rows.append(row)
+            else:
+                if len(row) == len(header):
+                    row = row[:6] + [""] + row[6:]
+                elif len(row) != len(header) + 1:
+                    raise ValueError(
+                        f"Unexpected row length {len(row)} in {path}. Expected {len(header)} or {len(header)+1}. Row head: {row[:10]}"
+                    )
+                normalized_rows.append(row)
 
     df = pd.DataFrame(normalized_rows, columns=expanded_header)
+    df = _deduplicate_columns(df)
     df["__row_order__"] = np.arange(len(df))
 
-    numeric_cols = [TRIAL_INDEX_COLUMN, "time_elapsed_seconds", "sensor_contact_quality", *POW_COLUMNS]
+    numeric_cols = ["time_elapsed_seconds", "sensor_contact_quality", *POW_COLUMNS]
     for col in numeric_cols:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    for col in [SAMPLE_TIME_COLUMN, "trial_started_at", "trial_ended_at"]:
+    for col in [SAMPLE_TIME_COLUMN, TRIAL_START_COLUMN, TRIAL_END_COLUMN]:
         if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors="coerce", utc=True)
+            df[col] = _normalize_timestamp_column(df[col])
 
     df[TARGET_COLUMN] = df[TARGET_COLUMN].astype(str).str.upper().str.strip()
-    df[SEQUENCE_ID_COLUMN] = (
-        df[GROUP_COLUMN].astype(str)
-        + "__"
-        + df[TRIAL_INDEX_COLUMN].astype("Int64").astype(str)
-    )
+    df[SEQUENCE_ID_COLUMN] = _build_trial_key_strings(df)
 
-    sort_keys = [GROUP_COLUMN, TRIAL_INDEX_COLUMN]
+    sort_keys = [SEQUENCE_ID_COLUMN]
     if SAMPLE_TIME_COLUMN in df.columns:
         sort_keys.append(SAMPLE_TIME_COLUMN)
     sort_keys.append("__row_order__")
-
     df = df.sort_values(sort_keys, kind="stable").reset_index(drop=True)
     df[TIME_COLUMN] = df.groupby(SEQUENCE_ID_COLUMN).cumcount()
     return df
 
 
-
-def build_feature_table(df: pd.DataFrame) -> pd.DataFrame:
+def build_feature_table(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str], list[str], list[str]]:
     missing = [c for c in POW_COLUMNS if c not in df.columns]
     if missing:
         raise ValueError(f"Missing PSD columns: {missing[:10]}")
@@ -311,38 +277,31 @@ def build_feature_table(df: pd.DataFrame) -> pd.DataFrame:
         .fillna(0.0)
     )
 
-    entropy = eeg.shannons_entropy(psd, fs=128)
+    entropy = eeg.shannons_entropy(psd, fs=FS)
+    if not isinstance(entropy, pd.DataFrame):
+        raise TypeError("eegproc.shannons_entropy did not return a DataFrame.")
+    entropy = entropy.reset_index(drop=True)
+
     asymm = compute_asymmetry_from_psd(psd).reset_index(drop=True)
 
-    feature_frame = pd.concat([df.reset_index(drop=True), psd.reset_index(drop=True), entropy, asymm], axis=1)
+    feature_frame = df.reset_index(drop=True).copy()
+    feature_frame[POW_COLUMNS] = psd.reset_index(drop=True)
+    feature_frame = pd.concat([feature_frame, entropy, asymm], axis=1)
+    feature_frame = _deduplicate_columns(feature_frame).fillna(0.0)
 
-    for col in FEATURE_COLUMNS:
-        if col not in feature_frame.columns:
-            feature_frame[col] = 0.0
-
-    return feature_frame.fillna(0.0)
-
-
-def build_trial_sequences(df: pd.DataFrame):
-    """
-    Returns:
-        X_list         : list of arrays, each [timesteps, n_features]
-        y              : class index, one per trial
-        groups         : session_id, one per trial
-        trial_ids      : one per trial
-        image_names    : image_name, one per trial
-        feature_cols   : list of feature column names
-        global_max_len : max timesteps across all trials
-    """
-    feature_cols = [c for c in FEATURE_COLUMNS if c not in META_COLUMNS]
+    feature_cols = [c for c in feature_frame.columns if c not in META_COLUMNS]
     if not feature_cols:
         raise ValueError("No feature columns found after excluding metadata columns.")
 
-    X_list = []
-    y_list = []
-    groups_list = []
-    trial_ids_list = []
-    image_names_list = []
+    return feature_frame, feature_cols, list(entropy.columns), list(asymm.columns)
+
+
+def build_trial_sequences(df: pd.DataFrame, feature_cols: list[str]):
+    X_list: list[np.ndarray] = []
+    y_list: list[int] = []
+    groups_list: list[str] = []
+    trial_ids_list: list[str] = []
+    image_names_list: list[str] = []
 
     for trial_id, g in df.groupby(SEQUENCE_ID_COLUMN, sort=False):
         g = g.sort_values(TIME_COLUMN, kind="stable")
@@ -362,15 +321,11 @@ def build_trial_sequences(df: pd.DataFrame):
         if len(x) == 0:
             continue
 
-        y = int(LABEL_TO_INDEX[label_text])
-        group = g[GROUP_COLUMN].iloc[0]
-        image_name = g[IMAGE_COLUMN].iloc[0] if IMAGE_COLUMN in g.columns else ""
-
         X_list.append(x)
-        y_list.append(y)
-        groups_list.append(group)
-        trial_ids_list.append(trial_id)
-        image_names_list.append(image_name)
+        y_list.append(int(LABEL_TO_INDEX[label_text]))
+        groups_list.append(str(g[GROUP_COLUMN].iloc[0]))
+        trial_ids_list.append(str(trial_id))
+        image_names_list.append(str(g[IMAGE_COLUMN].iloc[0]))
 
     if not X_list:
         raise ValueError("No valid trial sequences found.")
@@ -381,7 +336,7 @@ def build_trial_sequences(df: pd.DataFrame):
     image_names = np.asarray(image_names_list)
     global_max_len = max(seq.shape[0] for seq in X_list)
 
-    return X_list, y, groups, trial_ids, image_names, feature_cols, global_max_len
+    return X_list, y, groups, trial_ids, image_names, global_max_len
 
 
 def subset_list_by_indices(lst, indices):
@@ -389,12 +344,8 @@ def subset_list_by_indices(lst, indices):
 
 
 def fit_feature_scaler(seq_list: List[np.ndarray]) -> StandardScaler:
-    """
-    Fit on stacked training timesteps only.
-    """
-    stacked = np.vstack(seq_list)
     scaler = StandardScaler()
-    scaler.fit(stacked)
+    scaler.fit(np.vstack(seq_list))
     return scaler
 
 
@@ -404,28 +355,78 @@ def transform_sequence_list(seq_list: List[np.ndarray], scaler: StandardScaler) 
 
 def pad_sequence_list(seq_list: List[np.ndarray], max_len: int, n_features: int) -> np.ndarray:
     X = np.zeros((len(seq_list), max_len, n_features), dtype=np.float32)
-
     for i, seq in enumerate(seq_list):
         seq_len = min(seq.shape[0], max_len)
         X[i, :seq_len, :] = seq[:seq_len, :]
-
     return X
 
 
-def choose_validation_index(y_train: np.ndarray) -> int:
+def make_non_overlapping_folds(
+    fold_keys: np.ndarray,
+    y: np.ndarray,
+    fold_size: int,
+    seed: int = SEED,
+) -> list[tuple[np.ndarray, np.ndarray]]:
     """
-    Pick a validation example from the training fold while trying not to erase
-    the only example of a class when possible.
-    """
-    if len(y_train) <= 1:
-        return 0
+    Non-overlapping fold builder.
 
-    counts = pd.Series(y_train).value_counts()
-    candidate_classes = [cls for cls, count in counts.items() if count > 1]
-    if candidate_classes:
-        chosen_class = int(counts.loc[candidate_classes].idxmax())
-        return int(np.where(y_train == chosen_class)[0][-1])
-    return len(y_train) - 1
+    If you pass image_names as fold_keys:
+        - all rows/trials from the same image stay together
+        - 45 unique pictures with fold_size=15 -> 3 folds
+
+    If you want session-level isolation instead, pass groups instead of image_names.
+    """
+    if fold_size < 1:
+        raise ValueError("fold_size must be >= 1")
+
+    fold_keys = np.asarray(fold_keys).astype(str)
+    all_indices = np.arange(len(fold_keys))
+
+    key_to_indices: dict[str, list[int]] = {}
+    for idx, key in enumerate(fold_keys):
+        key_to_indices.setdefault(key, []).append(idx)
+
+    unique_keys = np.asarray(list(key_to_indices.keys()), dtype=object)
+    n_keys = len(unique_keys)
+    n_folds = math.ceil(n_keys / fold_size)
+
+    key_labels = np.asarray(
+        [int(pd.Series(y[key_to_indices[key]]).mode().iloc[0]) for key in unique_keys],
+        dtype=np.int32,
+    )
+
+    rng = np.random.default_rng(seed)
+    folds: list[list[str]] = [[] for _ in range(n_folds)]
+    fold_counts = [0] * n_folds
+
+    for cls in rng.permutation(np.unique(key_labels)):
+        cls_keys = unique_keys[key_labels == cls].copy()
+        rng.shuffle(cls_keys)
+
+        for key in cls_keys:
+            available = [i for i in range(n_folds) if fold_counts[i] < fold_size]
+            if not available:
+                available = list(range(n_folds))
+
+            target_fold = min(available, key=lambda i: fold_counts[i])
+            folds[target_fold].append(str(key))
+            fold_counts[target_fold] += 1
+
+    splits: list[tuple[np.ndarray, np.ndarray]] = []
+    for fold_test_keys in folds:
+        if not fold_test_keys:
+            continue
+
+        test_mask = np.isin(fold_keys, np.asarray(fold_test_keys, dtype=object))
+        test_idx = all_indices[test_mask]
+        train_idx = all_indices[~test_mask]
+
+        if len(test_idx) == 0 or len(train_idx) == 0:
+            continue
+
+        splits.append((train_idx, test_idx))
+
+    return splits
 
 
 # =========================
@@ -433,21 +434,24 @@ def choose_validation_index(y_train: np.ndarray) -> int:
 # =========================
 def build_bilstm_classifier(max_len: int, n_features: int, hp: dict) -> tf.keras.Model:
     inputs = tf.keras.Input(shape=(max_len, n_features), name="sequence_input")
-
     x = tf.keras.layers.Masking(mask_value=0.0)(inputs)
     x = tf.keras.layers.Bidirectional(
-        tf.keras.layers.LSTM(hp["lstm_units"], return_sequences=False)
+        tf.keras.layers.LSTM(
+            hp["lstm_units"],
+            return_sequences=False,
+            dropout=hp["dropout"] * 0.5,
+            recurrent_dropout=0.0,
+        )
     )(x)
+    x = tf.keras.layers.LayerNormalization()(x)
     x = tf.keras.layers.Dropout(hp["dropout"])(x)
     x = tf.keras.layers.Dense(hp["dense_units"], activation="relu")(x)
     x = tf.keras.layers.Dropout(hp["dropout"])(x)
     outputs = tf.keras.layers.Dense(len(CLASS_ORDER), activation="softmax")(x)
 
     model = tf.keras.Model(inputs=inputs, outputs=outputs)
-
-    optimizer = tf.keras.optimizers.Adam(learning_rate=hp["learning_rate"])
     model.compile(
-        optimizer=optimizer,
+        optimizer=tf.keras.optimizers.Adam(learning_rate=hp["learning_rate"]),
         loss="sparse_categorical_crossentropy",
         metrics=["accuracy"],
     )
@@ -461,7 +465,6 @@ def compute_class_weights(y_train: np.ndarray) -> dict[int, float]:
     counts = pd.Series(y_train).value_counts().to_dict()
     n_classes = len(CLASS_ORDER)
     n_samples = len(y_train)
-
     weights: dict[int, float] = {}
     for class_idx in range(n_classes):
         count = counts.get(class_idx, 0)
@@ -478,65 +481,63 @@ def train_one_lkocv_fold(
     max_len: int,
     n_features: int,
 ):
-    val_idx = choose_validation_index(y_train)
+    scaler = fit_feature_scaler(X_train_seq)
 
-    X_val_seq = [X_train_seq[val_idx]]
-    y_val = np.asarray([y_train[val_idx]], dtype=np.int32)
-
-    X_fit_seq = [seq for i, seq in enumerate(X_train_seq) if i != val_idx]
-    y_fit = np.asarray([label for i, label in enumerate(y_train) if i != val_idx], dtype=np.int32)
-
-    if len(X_fit_seq) == 0:
-        X_fit_seq = X_train_seq
-        y_fit = y_train
-
-    scaler = fit_feature_scaler(X_fit_seq)
-
-    X_fit_scaled = transform_sequence_list(X_fit_seq, scaler)
-    X_val_scaled = transform_sequence_list(X_val_seq, scaler)
+    X_train_scaled = transform_sequence_list(X_train_seq, scaler)
     X_test_scaled = transform_sequence_list(X_test_seq, scaler)
 
-    X_fit_pad = pad_sequence_list(X_fit_scaled, max_len=max_len, n_features=n_features)
-    X_val_pad = pad_sequence_list(X_val_scaled, max_len=max_len, n_features=n_features)
+    X_train_pad = pad_sequence_list(X_train_scaled, max_len=max_len, n_features=n_features)
     X_test_pad = pad_sequence_list(X_test_scaled, max_len=max_len, n_features=n_features)
 
     model = build_bilstm_classifier(max_len=max_len, n_features=n_features, hp=hp)
 
     callbacks = [
+        tf.keras.callbacks.ReduceLROnPlateau(
+            monitor="loss",
+            factor=0.5,
+            patience=8,
+            min_lr=1e-6,
+            verbose=0,
+        ),
         tf.keras.callbacks.EarlyStopping(
-            monitor="val_loss",
+            monitor="loss",
+            min_delta=1e-4,
             patience=EARLY_STOPPING_PATIENCE,
             restore_best_weights=True,
             verbose=0,
-        )
+        ),
     ]
 
     history = model.fit(
-        X_fit_pad,
-        y_fit,
-        validation_data=(X_val_pad, y_val),
+        X_train_pad,
+        y_train,
         epochs=MAX_EPOCHS,
         batch_size=hp["batch_size"],
         verbose=VERBOSE_FIT,
         callbacks=callbacks,
-        class_weight=compute_class_weights(y_fit),
+        class_weight=compute_class_weights(y_train),
+        shuffle=True,
     )
 
     probs = model.predict(X_test_pad, verbose=0)
     preds = probs.argmax(axis=1)
 
-    val_losses = history.history["val_loss"]
-    best_epoch = int(np.argmin(val_losses) + 1)
-    best_val_loss = float(np.min(val_losses))
-
-    fold_accuracy = float(accuracy_score(y_test, preds))
-    fold_f1_macro = float(f1_score(y_test, preds, average="macro", zero_division=0))
+    train_losses = history.history["loss"]
+    best_epoch = int(np.argmin(train_losses) + 1)
+    best_train_loss = float(np.min(train_losses))
+    final_train_loss = float(train_losses[-1])
+    final_train_accuracy = (
+        float(history.history["accuracy"][-1])
+        if "accuracy" in history.history else float("nan")
+    )
 
     return {
-        "best_val_loss": best_val_loss,
+        "best_train_loss": best_train_loss,
+        "final_train_loss": final_train_loss,
+        "final_train_accuracy": final_train_accuracy,
         "best_epoch": best_epoch,
-        "test_accuracy": fold_accuracy,
-        "test_f1_macro": fold_f1_macro,
+        "test_accuracy": float(accuracy_score(y_test, preds)),
+        "test_f1_macro": float(f1_score(y_test, preds, average="macro", zero_division=0)),
         "preds": preds,
         "probs": probs,
         "scaler": scaler,
@@ -551,45 +552,42 @@ def train_final_model(
     max_len: int,
     n_features: int,
 ):
-    val_idx = choose_validation_index(y)
-
-    X_val_seq = [X_list[val_idx]]
-    y_val = np.asarray([y[val_idx]], dtype=np.int32)
-
-    X_fit_seq = [seq for i, seq in enumerate(X_list) if i != val_idx]
-    y_fit = np.asarray([label for i, label in enumerate(y) if i != val_idx], dtype=np.int32)
-
-    if len(X_fit_seq) == 0:
-        X_fit_seq = X_list
-        y_fit = y
-
-    scaler = fit_feature_scaler(X_fit_seq)
-
-    X_fit_scaled = transform_sequence_list(X_fit_seq, scaler)
-    X_val_scaled = transform_sequence_list(X_val_seq, scaler)
+    scaler = fit_feature_scaler(X_list)
     X_all_scaled = transform_sequence_list(X_list, scaler)
-
-    X_fit_pad = pad_sequence_list(X_fit_scaled, max_len=max_len, n_features=n_features)
-    X_val_pad = pad_sequence_list(X_val_scaled, max_len=max_len, n_features=n_features)
     X_all_pad = pad_sequence_list(X_all_scaled, max_len=max_len, n_features=n_features)
 
     model = build_bilstm_classifier(max_len=max_len, n_features=n_features, hp=hp)
 
+    callbacks = [
+        tf.keras.callbacks.ReduceLROnPlateau(
+            monitor="loss",
+            factor=0.5,
+            patience=8,
+            min_lr=1e-6,
+            verbose=0,
+        ),
+        tf.keras.callbacks.EarlyStopping(
+            monitor="loss",
+            min_delta=1e-4,
+            patience=EARLY_STOPPING_PATIENCE,
+            restore_best_weights=True,
+            verbose=0,
+        ),
+    ]
+
     history = model.fit(
-        X_fit_pad,
-        y_fit,
-        validation_data=(X_val_pad, y_val),
+        X_all_pad,
+        y,
         epochs=final_epochs,
         batch_size=hp["batch_size"],
         verbose=VERBOSE_FIT,
-        class_weight=compute_class_weights(y_fit),
+        callbacks=callbacks,
+        class_weight=compute_class_weights(y),
+        shuffle=True,
     )
 
     probs = model.predict(X_all_pad, verbose=0)
     preds = probs.argmax(axis=1)
-
-    train_accuracy = float(accuracy_score(y, preds))
-    train_f1_macro = float(f1_score(y, preds, average="macro", zero_division=0))
 
     return {
         "model": model,
@@ -597,8 +595,8 @@ def train_final_model(
         "history": history,
         "preds": preds,
         "probs": probs,
-        "train_accuracy": train_accuracy,
-        "train_f1_macro": train_f1_macro,
+        "train_accuracy": float(accuracy_score(y, preds)),
+        "train_f1_macro": float(f1_score(y, preds, average="macro", zero_division=0)),
     }
 
 
@@ -606,6 +604,8 @@ def save_final_model_bundle(
     model: tf.keras.Model,
     scaler: StandardScaler,
     feature_cols: list[str],
+    entropy_columns: list[str],
+    asymmetry_columns: list[str],
     global_max_len: int,
     hp: dict,
     output_dir: Path,
@@ -622,8 +622,8 @@ def save_final_model_bundle(
             "keras_model_path": str(keras_path.resolve()),
             "feature_names": feature_cols,
             "pow_columns": POW_COLUMNS,
-            "entropy_columns": ENTROPY_COLUMNS,
-            "asymmetry_columns": ASYMMETRY_COLUMNS,
+            "entropy_columns": entropy_columns,
+            "asymmetry_columns": asymmetry_columns,
             "class_order": CLASS_ORDER,
             "label_to_index": LABEL_TO_INDEX,
             "index_to_label": INDEX_TO_LABEL,
@@ -657,14 +657,29 @@ def run_lkocv():
     set_all_seeds(SEED)
 
     raw_df = load_feature_table()
-    df = build_feature_table(raw_df)
-    X_list, y, groups, trial_ids, image_names, feature_cols, global_max_len = build_trial_sequences(df)
+    df, feature_cols, entropy_columns, asymmetry_columns = build_feature_table(raw_df)
+    X_list, y, groups, trial_ids, image_names, global_max_len = build_trial_sequences(df, feature_cols)
 
     n_trials = len(X_list)
-    n_features = len(feature_cols)
-    total_folds = math.comb(n_trials, LEAVE_K_OUT)
+    if LEAVE_K_OUT < 1:
+        raise ValueError("LEAVE_K_OUT must be >= 1.")
 
-    log_lines = []
+    n_features = len(feature_cols)
+
+    # Build non-overlapping folds by image_name
+    # 45 unique images with LEAVE_K_OUT=15 -> 3 folds
+    split_indices = make_non_overlapping_folds(
+        fold_keys=image_names,
+        y=y,
+        fold_size=LEAVE_K_OUT,
+        seed=SEED,
+    )
+    total_folds = len(split_indices)
+
+    if total_folds == 0:
+        raise ValueError("No valid folds were created.")
+
+    log_lines: list[str] = []
 
     def log(msg: str):
         print(msg)
@@ -673,36 +688,39 @@ def run_lkocv():
     log(f"\nOutput directory: {output_dir.resolve()}")
     log(f"Trials: {n_trials}")
     log(f"Sessions: {len(np.unique(groups))}")
+    log(f"Unique images: {len(np.unique(image_names))}")
     log(f"Feature dimension: {n_features}")
     log(f"Global max sequence length: {global_max_len}")
     log(f"Target column: {TARGET_COLUMN}")
-    log(f"Leave-k-out setting: K = {LEAVE_K_OUT}")
+    log(f"Fold size (held-out images): {LEAVE_K_OUT}")
     log(f"Total folds: {total_folds}")
     log("Classification target order: " + ", ".join(CLASS_ORDER))
 
-    splitter = LeavePOut(p=LEAVE_K_OUT)
-    dummy_X = np.zeros((n_trials, 1), dtype=np.float32)
+    fold_results: list[dict] = []
+    all_y_true: list[np.ndarray] = []
+    all_y_pred: list[np.ndarray] = []
+    all_prediction_rows: list[dict] = []
+    best_epochs: list[int] = []
 
-    fold_results = []
-    all_y_true = []
-    all_y_pred = []
-    all_prediction_rows = []
-    best_epochs = []
-
-    for fold_idx, (train_idx, test_idx) in enumerate(splitter.split(dummy_X), start=1):
+    for fold_idx, (train_idx, test_idx) in enumerate(split_indices, start=1):
         log("\n" + "=" * 70)
         log(f"FOLD {fold_idx}/{total_folds}")
 
         X_train = subset_list_by_indices(X_list, train_idx)
         y_train = y[train_idx]
         groups_train = groups[train_idx]
-        trial_ids_train = trial_ids[train_idx]
+        images_train = image_names[train_idx].astype(str)
 
         X_test = subset_list_by_indices(X_list, test_idx)
         y_test = y[test_idx]
         groups_test = groups[test_idx]
         trial_ids_test = trial_ids[test_idx]
-        image_names_test = image_names[test_idx]
+        image_names_test = image_names[test_idx].astype(str)
+
+        # Hard leakage guard on image names
+        overlap = set(images_train).intersection(set(image_names_test))
+        if overlap:
+            raise RuntimeError(f"Image leakage detected across train/test: {sorted(overlap)[:10]}")
 
         log(f"Train sessions: {np.unique(groups_train)}")
         log(f"Held-out trials: {trial_ids_test.tolist()}")
@@ -762,7 +780,7 @@ def run_lkocv():
     results_df.to_csv(output_dir / "fold_results.csv", index=False)
 
     log("\n" + "=" * 70)
-    log("FINAL LKOCV RESULTS")
+    log("FINAL RESULTS")
     log(results_df.to_string(index=False))
 
     numeric_results = results_df.select_dtypes(include=[np.number])
@@ -834,6 +852,8 @@ def run_lkocv():
             model=final_out["model"],
             scaler=final_out["scaler"],
             feature_cols=feature_cols,
+            entropy_columns=entropy_columns,
+            asymmetry_columns=asymmetry_columns,
             global_max_len=global_max_len,
             hp=HYPERPARAMS,
             output_dir=output_dir,
@@ -874,6 +894,7 @@ def run_lkocv():
         "input_feature_table": str(resolve_input_feature_table().resolve()),
         "n_trials": int(n_trials),
         "n_sessions": int(len(np.unique(groups))),
+        "n_unique_images": int(len(np.unique(image_names))),
         "feature_dim": int(n_features),
         "global_max_sequence_length": int(global_max_len),
         "leave_k_out": int(LEAVE_K_OUT),
@@ -884,7 +905,6 @@ def run_lkocv():
         "median_best_epoch": int(np.median(best_epochs)) if best_epochs else None,
         "class_order": CLASS_ORDER,
         "hyperparameters": HYPERPARAMS,
-        "entropy_backend": "eegproc" if eeg is not None else "fallback_shannon",
     }
     with open(output_dir / "run_summary.json", "w", encoding="utf-8") as f:
         json.dump(summary_json, f, indent=2)

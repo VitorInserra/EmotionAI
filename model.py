@@ -221,6 +221,13 @@ class QuadrantModel:
 
         return pd.DataFrame(rows)
 
+    def _align_feature_columns(self, frame: pd.DataFrame) -> pd.DataFrame:
+        aligned = frame.copy()
+        missing_cols = [col for col in self.feature_names if col not in aligned.columns]
+        for col in missing_cols:
+            aligned[col] = 0.0
+        return aligned[self.feature_names].fillna(0.0)
+
     def featurize_psd(
         self,
         psd_input: Mapping[str, float] | Sequence[Mapping[str, float]] | pd.DataFrame,
@@ -230,10 +237,10 @@ class QuadrantModel:
         entropy_frame = eeg.shannons_entropy(psd_only, fs=128)
         asymmetry_frame = compute_asymmetry_from_psd(psd_only)
         feature_frame = pd.concat([psd_only, entropy_frame, asymmetry_frame], axis=1)
-        return feature_frame[self.feature_names].fillna(0.0)
+        return self._align_feature_columns(feature_frame)
 
     def _scale_sequence(self, feature_frame: pd.DataFrame) -> np.ndarray:
-        frame = feature_frame[self.feature_names]
+        frame = self._align_feature_columns(feature_frame)
         if self.scaler is not None:
             return np.asarray(self.scaler.transform(frame), dtype=np.float32)
         if self.scaler_mean_ is None or self.scaler_scale_ is None:

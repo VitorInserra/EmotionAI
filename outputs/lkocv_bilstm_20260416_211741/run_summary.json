@@ -1,0 +1,27 @@
+{
+  "input_feature_table": "/Users/tolas/Desktop/HCI 590/EmotionAI/datasets/base_dataset.csv",
+  "n_trials": 45,
+  "n_sessions": 2,
+  "n_unique_images": 22,
+  "feature_dim": 211,
+  "global_max_sequence_length": 206,
+  "leave_k_out": 15,
+  "n_folds": 2,
+  "overall_accuracy": 0.35555555555555557,
+  "overall_f1_macro": 0.27532051282051284,
+  "overall_f1_weighted": 0.3677207977207977,
+  "median_best_epoch": 72,
+  "class_order": [
+    "LALV",
+    "LAHV",
+    "HAHV",
+    "HALV"
+  ],
+  "hyperparameters": {
+    "lstm_units": 64,
+    "dense_units": 32,
+    "dropout": 0.3,
+    "learning_rate": 0.0001,
+    "batch_size": 8
+  }
+}

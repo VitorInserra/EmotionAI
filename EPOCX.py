@@ -77,7 +77,7 @@ async def subscribe_to_streams(websocket: websockets.WebSocketClientProtocol, co
 
 
 class EpocXStream:
-    def __init__(self, verbose: bool = True, max_rows: int = 25000) -> None:
+    def __init__(self, verbose: bool = True, max_rows: int = 2000) -> None:
         self.verbose = verbose
         self.max_rows = max_rows
         self.status_message = "idle"
