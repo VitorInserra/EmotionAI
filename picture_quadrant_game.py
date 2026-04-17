@@ -440,12 +440,22 @@ class PictureQuadrantGame:
 
         self.recorder = SessionRecorder(self.base_dir)
         self.eeg_stream = EpocXStream(verbose=True)
+        self.eeg_available = False
         self.finetune_process: Optional[subprocess.Popen[str]] = None
         self.finetune_status_text = "idle"
 
-        self.eeg_stream.start()
-        self.eeg_stream.require_ready(timeout=STREAM_READY_TIMEOUT_SECONDS)
-        print("EPOC X stream is ready. Loading model and starting game.", flush=True)
+        try:
+            self.eeg_stream.start()
+            self.eeg_stream.require_ready(timeout=STREAM_READY_TIMEOUT_SECONDS)
+            self.eeg_available = True
+            print("EPOC X stream is ready. Loading model and starting game.", flush=True)
+        except Exception as exc:
+            self.eeg_available = False
+            print(
+                f"No EPOC X stream detected after {STREAM_READY_TIMEOUT_SECONDS:.0f} seconds. "
+                f"Starting game without headset. ({exc})",
+                flush=True,
+            )
 
         self.model = QuadrantModel()
 
@@ -469,7 +479,6 @@ class PictureQuadrantGame:
         self.pending_model_choice: Optional[Quadrant] = None
         self.pending_model_available = False
 
-        # Continuous trial capture state
         self.current_trial_samples: list[dict[str, float]] = []
         self.current_trial_sample_timestamp_strings: set[str] = set()
         self.last_eeg_poll_epoch: float = 0.0
@@ -734,8 +743,12 @@ class PictureQuadrantGame:
 
     def _refresh_status_text(self) -> None:
         self._poll_finetune_process()
+        if self.eeg_available:
+            status_prefix = "EEG stream ready."
+        else:
+            status_prefix = "No headset detected. Running without EEG."
         self.status_label.configure(
-            text=f"EEG stream ready. Online fine-tune status: {self.finetune_status_text}"
+            text=f"{status_prefix} Online fine-tune status: {self.finetune_status_text}"
         )
         self.root.after(1000, self._refresh_status_text)
 
@@ -745,10 +758,14 @@ class PictureQuadrantGame:
         end_epoch: float,
         fallback_latest: bool,
     ) -> list[dict[str, float]]:
+        if not self.eeg_available:
+            return []
         try:
             return self.eeg_stream.samples_between(start_epoch, end_epoch, fallback_latest=fallback_latest)
         except TypeError:
             return self.eeg_stream.samples_between(start_epoch, end_epoch)
+        except Exception:
+            return []
 
     def _sample_timestamp_to_iso(self, sample_ts: float) -> str:
         return datetime.fromtimestamp(sample_ts, tz=timezone.utc).isoformat()
@@ -792,9 +809,12 @@ class PictureQuadrantGame:
         self.current_trial_samples = []
         self.current_trial_sample_timestamp_strings = set()
         self.last_eeg_poll_epoch = self.trial_started_epoch
-        self._schedule_eeg_poll()
+        if self.eeg_available:
+            self._schedule_eeg_poll()
 
     def _schedule_eeg_poll(self) -> None:
+        if not self.eeg_available:
+            return
         if self.eeg_poll_job is not None:
             self.root.after_cancel(self.eeg_poll_job)
         self.eeg_poll_job = self.root.after(EEG_POLL_INTERVAL_MS, self._poll_eeg_during_trial)
@@ -802,7 +822,7 @@ class PictureQuadrantGame:
     def _poll_eeg_during_trial(self) -> None:
         self.eeg_poll_job = None
 
-        if self.last_choice is not None:
+        if not self.eeg_available or self.last_choice is not None:
             return
 
         now_epoch = time.time()
@@ -882,6 +902,8 @@ class PictureQuadrantGame:
         return QUADRANT_BY_CODE.get(code) if code else None
 
     def _maybe_start_finetune(self) -> None:
+        if not self.eeg_available:
+            return
         if self.trial_index < 5 or self.trial_index % 5 != 0:
             return
         if self.finetune_process is not None and self.finetune_process.poll() is None:
@@ -917,7 +939,7 @@ class PictureQuadrantGame:
         elapsed_seconds: float,
         trial_ended_epoch: float,
     ) -> int:
-        sensor_contact_quality = self.eeg_stream.sensor_contact_quality
+        sensor_contact_quality = self.eeg_stream.sensor_contact_quality if self.eeg_available else None
         ended_at = datetime.fromtimestamp(trial_ended_epoch, tz=timezone.utc).isoformat()
 
         finalized_values: dict[str, object] = {
@@ -940,7 +962,6 @@ class PictureQuadrantGame:
         )
 
         if updated_count == 0:
-            # If no streamed rows were captured, save a metadata-only fallback row.
             fallback_row: dict[str, object] = {
                 "session_id": self.recorder.session_id,
                 "trial_index": self.trial_index,
@@ -976,7 +997,6 @@ class PictureQuadrantGame:
         self._cancel_pending_jobs()
         self.last_choice = key
 
-        # Pull a final batch since the last poll so the latest PSD rows are not missed.
         final_samples = self._safe_samples_between(self.last_eeg_poll_epoch, trial_ended_epoch, fallback_latest=True)
         deduped_final_samples: list[dict[str, float]] = []
         for sample in final_samples:
@@ -998,7 +1018,7 @@ class PictureQuadrantGame:
             self.recorder.append_rows(final_stream_rows)
 
         user_choice = QUADRANTS[key]
-        if not self.current_trial_samples:
+        if self.eeg_available and not self.current_trial_samples:
             self.finetune_status_text = "warning: no in-range EEG rows; saved metadata row only"
 
         model_choice = self._predict_model_choice(self.current_trial_samples) if self.current_trial_samples else None
@@ -1028,7 +1048,10 @@ class PictureQuadrantGame:
                 pass
 
         self.recorder.aggregate_to_full_dataset()
-        self.eeg_stream.stop()
+        try:
+            self.eeg_stream.stop()
+        except Exception:
+            pass
         self.root.destroy()
 
 
